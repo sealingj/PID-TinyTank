@@ -1,0 +1,298 @@
+
+#include <FlexiTimer2.h>//定时器库的 头文件     
+#include <PID_v1.h>
+char buffer[18];
+uint8_t CMD=3;
+//encoder
+const byte encoder0pinA_M1 = 18;//A pin -> the interrupt pin 5
+const byte encoder0pinB_M1 = 20;//B pin -> the digital pin 20
+const byte encoder0pinA_M2 = 19;//A pin -> the interrupt pin 4
+const byte encoder0pinB_M2 = 21;//B pin -> the digital pin 21
+byte encoder0PinALast_M1,encoder0PinALast_M2;  //the number of the pulses
+boolean Direction_M1,Direction_M2;//the rotation direction
+boolean result_M1, result_M2;
+double val_output_M1,val_output_M2;
+double duration_M1,duration_M2;  
+double abs_duration_M1,abs_duration_M2;  
+double Setpoint_M1,Setpoint_M2;
+double Kp = 0.8, Ki = 8, Kd = 0;
+PID myPID_M1(&abs_duration_M1, &val_output_M1, &Setpoint_M1, Kp, Ki, Kd, DIRECT);
+PID myPID_M2(&abs_duration_M2, &val_output_M2, &Setpoint_M2, Kp, Ki, Kd, DIRECT);
+int result1,result2;
+long int count_M1=0;
+long int count_M2=0;
+//PPM from PIN2 and PIN3
+int ppm1 = 2; //Servo Channel 1
+int ppm2 = 3; //Servo Channel 2
+unsigned long rc1_PulseStartTicks;
+unsigned long rc2_PulseStartTicks;
+volatile int rc1_val;
+volatile int rc2_val;
+//Motor Control Pin
+int EN1 = 4;  
+int EN2 = 9; 
+int IN1M = 5;
+int IN1P = 6;
+int IN2M = 8;
+int IN2P = 7;
+
+int left_Speed = 0;
+int right_Speed = 0;
+
+int left_Status = 0;
+int right_Status = 0;
+void setup() {
+  // put your setup code here, to run once:
+  pinMode(EN1,OUTPUT);
+  pinMode(EN2,OUTPUT);
+  pinMode(IN1M,OUTPUT);
+  pinMode(IN1P,OUTPUT);
+  pinMode(IN2M,OUTPUT);
+  pinMode(IN2P,OUTPUT);
+  Motor1(0,0);
+  Motor2(0,0);
+  Serial.begin(9600);
+  pinMode(ppm1,INPUT);
+  pinMode(ppm2,INPUT);
+
+ // attachInterrupt(0,rc1,CHANGE);
+ // attachInterrupt(1,rc2,CHANGE);
+  myPID_M1.SetMode(AUTOMATIC);//设置PID为自动模式
+  myPID_M1.SetSampleTime(200);//设置PID采样频率为100ms
+  myPID_M2.SetMode(AUTOMATIC);//设置PID为自动模式
+  myPID_M2.SetSampleTime(200);//设置PID采样频率为100ms
+  EncoderInit();//Initialize the module
+//设置定时器
+ // FlexiTimer2::set(500,flash);
+ // FlexiTimer2::start();
+  Setpoint_M1=20;
+  Setpoint_M2=20;
+
+  delay(100);
+}
+
+//Interrput RC1
+void rc1(){
+  if(digitalRead(ppm1) == HIGH )
+    rc1_PulseStartTicks = micros();
+  else
+    rc1_val = micros() - rc1_PulseStartTicks;
+}
+
+//Interrput RC2
+void rc2(){
+  if( digitalRead(ppm2) == HIGH )
+    rc2_PulseStartTicks = micros();
+  else
+    rc2_val = micros() - rc2_PulseStartTicks;
+}
+
+void Motor1(int pwm, boolean reverse)
+{
+  if(pwm==0)
+  {
+    digitalWrite(EN1,LOW); //set pwm control, 0 for stop, and 255 for maximum speed
+    digitalWrite(IN1M,LOW);
+    digitalWrite(IN1P,LOW);
+  }
+  else
+  {
+    analogWrite(EN1,pwm); //set pwm control, 0 for stop, and 255 for maximum speed
+    if(reverse)
+    { 
+      digitalWrite(IN1M,HIGH);
+      digitalWrite(IN1P,LOW);
+    }
+    else
+    {
+      digitalWrite(IN1M,LOW);
+      digitalWrite(IN1P,HIGH);    
+    }
+  }
+}  
+        
+void Motor2(int pwm, boolean reverse)
+{
+  if(pwm==0)
+  {
+    digitalWrite(EN2,LOW);
+    digitalWrite(IN2M,LOW);  
+    digitalWrite(IN2P,LOW);     
+  }
+  else
+  {
+    analogWrite(EN2,pwm);
+    if(reverse)
+    { 
+      digitalWrite(IN2M,HIGH);  
+      digitalWrite(IN2P,LOW);  
+    }
+    else
+    {
+      digitalWrite(IN2M,LOW);   
+      digitalWrite(IN2P,HIGH); 
+    }
+  }
+}
+
+const int mid_Pos = 1520;
+const int max_Speed = 255;
+const int mid_Speed = 200;
+const int thread = 50;
+        
+void loop() {
+
+  
+ abs_duration_M1=abs(duration_M1);
+ abs_duration_M2=abs(duration_M2);
+ Motor1(val_output_M1,HIGH);
+ Motor2(val_output_M2,HIGH);
+ result1=myPID_M1.Compute();
+ result2=myPID_M2.Compute();
+ if(result1)
+ {
+  // Serial.print("Pluse_M1: ");
+  //  Serial.println(duration_M1);
+  //  Serial.write(CMD);
+   // Serial.write(0xFC);
+   //  Serial.write((uint8_t)duration_M1);
+  //   Serial.write(0xFC);
+   //   Serial.write(0x03);
+    duration_M1 = 0; //计数清零等待下次计数
+  }
+   if(result2)
+ {
+  // Serial.print("Pluse_M2: ");
+   // Serial.println(duration_M2);
+   duration_M2 = 0; //计数清零等待下次计数
+  }
+  //串口接收
+  if(Serial.available()>0)
+{
+   int index=0;
+   delay(100);
+   int numchar=Serial.available();
+   if(numchar>15)
+   {
+    numchar=15;
+} 
+while(numchar--)
+{
+buffer[index++]=Serial.read();
+}
+SpeedSet(buffer);
+}
+}
+//相关函数
+void wheelSpeed_M1()
+{
+  
+  int Lstate_M1 = digitalRead(encoder0pinA_M1);
+  if ((encoder0PinALast_M1 == LOW) && Lstate_M1 == HIGH)
+  {
+    int val_M1 = digitalRead(encoder0pinB_M1);
+    if (val_M1 == LOW && Direction_M1)
+    {
+      Direction_M1 = false; //Reverse
+    }
+    else if (val_M1 == HIGH && !Direction_M1)
+    {
+      Direction_M1 = true;  //Forward
+    }
+  }
+  encoder0PinALast_M1 = Lstate_M1;
+
+  if (Direction_M1) 
+  {
+    duration_M1++;
+    count_M1++;
+  }
+  else  
+  {
+    duration_M1--;
+    count_M1--;
+  }
+
+ }
+  void wheelSpeed_M2()
+{
+
+  
+  int Lstate_M2 = digitalRead(encoder0pinA_M2);
+  if ((encoder0PinALast_M2 == LOW) && Lstate_M2 == HIGH)
+  {
+    int val_M2 = digitalRead(encoder0pinB_M2);
+    if (val_M2 == LOW && Direction_M2)
+    {
+      Direction_M2 = false; //Reverse
+    }
+    else if (val_M2 == HIGH && !Direction_M2)
+    {
+      Direction_M2 = true;  //Forward
+    }
+  }
+  encoder0PinALast_M2 = Lstate_M2;
+
+  if (Direction_M2) 
+  {
+    duration_M2++;
+    count_M2++;
+  }
+  else  
+  {
+    duration_M2--;
+    count_M2--;
+  }
+ }
+ void EncoderInit()
+ {
+Direction_M1 = true;//default -> Forward
+Direction_M2 = true;//default -> Forward
+pinMode(encoder0pinB_M1, INPUT);
+pinMode(encoder0pinB_M2, INPUT);
+attachInterrupt(5, wheelSpeed_M1, CHANGE);
+attachInterrupt(4, wheelSpeed_M2, CHANGE);
+
+}
+ 
+ void flash()
+ {
+  Serial.print("Pulse_M1:");
+  Serial.print(count_M1);
+   Serial.print(",");
+   Serial.print("Pulse_M2:");
+  Serial.println(count_M2);
+  duration_M1= 0;
+  duration_M2= 0;
+  }
+///////////////////
+void SpeedSet(char *data)
+{
+  char* parameter;
+ parameter=strtok(data,",");
+ if(parameter[0]=='r')
+ {
+  int Ans=strtol(parameter+1,NULL,10);
+  Ans=constrain(Ans,0,100);
+  Setpoint_M1=Ans;
+  }
+  if(parameter[0]=='l')
+ {
+  int Ans=strtol(parameter+1,NULL,10);
+  Ans=constrain(Ans,0,100);
+  Setpoint_M2=Ans;
+  }
+  if(parameter[0]=='p')
+ {
+  int Ans=strtol(parameter+1,NULL,10);
+  Ans=constrain(Ans,0,100);
+  Kp=Ans/10.0;
+  }
+  if(parameter[0]=='i')
+ {
+  int Ans=strtol(parameter+1,NULL,10);
+  Ans=constrain(Ans,0,100);
+  Ki=Ans/10.0;
+  }
+  
+}
